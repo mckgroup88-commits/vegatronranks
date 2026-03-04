@@ -1,0 +1,174 @@
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.chrome.options import Options
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.units import inch
+from datetime import datetime
+import time
+import os
+import openpyxl
+
+DOMAIN = "vegatron.com.sg"
+
+KEYWORDS = [
+    "diesel supplier singapore",
+    "bunker oil supplier",
+    "bunker fuel supplier",
+    "bunker supplier singapore",
+    "Diesel Fuel",
+    "diesel fuel delivery",
+    "diesel delivery singapore",
+    "diesel top up singapore",
+    "diesel fuel supplier",
+    "diesel supply singapore",
+    "Emergency Diesel",
+    "emergency diesel",
+    "24/7 diesel",
+    "Homepage",
+    "refueling services",
+    "diesel refueling services",
+    "fuel management system",
+    "diesel tanks",
+    "lubricant oil supplier singapore",
+    "oil and gas trading companies in singapore",
+    "marine gas oil",
+    "adblue singapore",
+    "10ppm"
+]
+
+REPORTS_FOLDER = "reports"
+HISTORY_FILE = "rank_history.xlsx"
+os.makedirs(REPORTS_FOLDER, exist_ok=True)
+
+def check_rankings():
+    options = Options()
+    options.add_argument("--window-size=400,300")
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    
+    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+    
+    now = datetime.now()
+    date_string = now.strftime("%Y-%m-%d")
+    timestamp = now.strftime("%H%M%S")
+    
+    results = []
+    
+    for keyword in KEYWORDS:
+        driver.get(f"https://www.google.com/search?q={keyword}")
+        time.sleep(6)
+        links = driver.find_elements(By.CSS_SELECTOR, "div.yuRUbf a")
+        
+        rank = "Not Found"
+        position = 1
+        for link in links:
+            href = link.get_attribute("href")
+            if DOMAIN in href:
+                rank = position
+                break
+            position += 1
+        print(f"{keyword} → VEGATRON RANK: {rank}")
+        results.append([date_string, keyword, rank])
+    
+    driver.quit()
+    return results, date_string, timestamp
+
+def update_history(results):
+    if os.path.exists(HISTORY_FILE):
+        wb = openpyxl.load_workbook(HISTORY_FILE)
+        ws = wb.active
+    else:
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.append(["Date", "Keyword", "Rank"])
+    
+    for row in results:
+        ws.append(row)
+    
+    wb.save(HISTORY_FILE)
+
+def generate_pdf(results, date_string, timestamp):
+    file_name = f"vegatron_seo_{date_string}_{timestamp}.pdf"
+    file_path = os.path.join(REPORTS_FOLDER, file_name)
+    
+    doc = SimpleDocTemplate(file_path)
+    elements = []
+    
+    styles = getSampleStyleSheet()
+    elements.append(Paragraph("VEGATRON SEO RANKING REPORT", styles["Heading1"]))
+    elements.append(Spacer(1, 0.3*inch))
+    elements.append(Paragraph(f"Report Date: {date_string}", styles["Normal"]))
+    elements.append(Spacer(1, 0.3*inch))
+    
+    table_data = [["Keyword", "Current Rank", "Current Rank Date", "Previous Rank", "Previous Rank Date", "Trend"]]
+    
+    previous_data = {}
+    if os.path.exists(HISTORY_FILE):
+        wb = openpyxl.load_workbook(HISTORY_FILE)
+        ws = wb.active
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            previous_data[row[1]] = (row[2], row[0])
+    
+    # Populate table rows
+    for row in results:
+        keyword = row[1]
+        current_rank = row[2]
+        prev_rank, prev_date = previous_data.get(keyword, ("N/A", "N/A"))
+        trend = "-"
+        try:
+            if prev_rank != "N/A" and current_rank != "Not Found":
+                trend_val = int(prev_rank) - int(current_rank)
+                if trend_val > 0:
+                    trend = f"↑{trend_val}"
+                elif trend_val < 0:
+                    trend = f"↓{abs(trend_val)}"
+                else:
+                    trend = "→"
+        except:
+            trend = "-"
+        
+        table_data.append([keyword, str(current_rank), date_string, str(prev_rank), prev_date, trend])
+    
+    table = Table(table_data, colWidths=[3*inch, 0.7*inch, 1*inch, 0.7*inch, 1*inch, 0.7*inch])
+    
+    style = TableStyle([
+        ("BACKGROUND", (0,0), (-1,0), colors.grey),
+        ("TEXTCOLOR", (0,0), (-1,0), colors.whitesmoke),
+        ("ALIGN", (0,0), (-1,-1), "CENTER"),
+        ("GRID", (0,0), (-1,-1), 1, colors.black),
+        ("FONTNAME", (0,0), (-1,-1), "Helvetica"),
+        ("FONTSIZE", (0,0), (-1,-1), 9),
+    ])
+    
+    # --- Coloring rules ---
+    for i, row in enumerate(table_data[1:], start=1):
+        current_rank = row[1]
+        prev_rank = row[3]
+        try:
+            current_rank_num = int(current_rank)
+            prev_rank_num = int(prev_rank) if prev_rank != "N/A" else None
+            
+            # Only highlight top 9
+            if current_rank_num <= 9:
+                if prev_rank_num is not None and current_rank_num != prev_rank_num:
+                    style.add("BACKGROUND", (1,i), (1,i), colors.lightblue)  # changed rank → blue
+                elif current_rank_num == 1:
+                    style.add("BACKGROUND", (1,i), (1,i), colors.lightgreen)  # rank 1 → green
+            # Rank 10+ stays white
+        except:
+            pass
+    
+    table.setStyle(style)
+    elements.append(table)
+    
+    doc.build(elements)
+    print(f"PDF saved as: {file_path}")
+
+# --- Main Execution ---
+if __name__ == "__main__":
+    results, date_string, timestamp = check_rankings()
+    update_history(results)
+    generate_pdf(results, date_string, timestamp)
