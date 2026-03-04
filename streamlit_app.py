@@ -1,13 +1,10 @@
 import streamlit as st
 import pandas as pd
-import time
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
+import requests
 
 # ---------------- CONFIG ----------------
+API_KEY = "YOUR_GOOGLE_API_KEY"  # Replace with your Google Custom Search API key
+CX = "YOUR_SEARCH_ENGINE_ID"     # Replace with your Custom Search Engine ID
 MAIN_DOMAIN = "vegatron.com.sg"
 
 KEYWORDS = [
@@ -40,51 +37,47 @@ KEYWORDS = [
 st.set_page_config(page_title="Vegatron Rank Checker", layout="wide")
 st.title("🚀 Vegatron Google Rank Checker")
 
-def check_rankings():
-    options = Options()
-    options.add_argument("--headless")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-blink-features=AutomationControlled")
+def get_google_rank(keyword):
+    """Query Google Custom Search API and return the rank and URL of the first matching MAIN_DOMAIN"""
+    url = "https://www.googleapis.com/customsearch/v1"
+    params = {
+        "key": API_KEY,
+        "cx": CX,
+        "q": keyword,
+        "num": 10  # number of results per query
+    }
 
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+    response = requests.get(url, params=params).json()
+    results = response.get("items", [])
 
-    results = []
+    rank = "Not Found"
+    matched_url = "-"
 
+    for i, item in enumerate(results, 1):
+        link = item.get("link", "")
+        if MAIN_DOMAIN in link:
+            rank = i
+            matched_url = link
+            break
+
+    return rank, matched_url
+
+def check_all_keywords():
+    """Loop through keywords and get rank info"""
+    data = []
     for keyword in KEYWORDS:
-        driver.get(f"https://www.google.com/search?q={keyword}")
-        time.sleep(5)
-
-        links = driver.find_elements(By.CSS_SELECTOR, "div.yuRUbf a")
-
-        rank = "Not Found"
-        matched_url = "-"
-
-        position = 1
-        for link in links:
-            href = link.get_attribute("href")
-
-            if MAIN_DOMAIN in href:
-                rank = position
-                matched_url = href
-                break
-
-            position += 1
-
-        results.append({
+        rank, url = get_google_rank(keyword)
+        data.append({
             "Keyword": keyword,
             "Rank": rank,
-            "Matched URL": matched_url
+            "Matched URL": url
         })
-
-    driver.quit()
-
-    return pd.DataFrame(results)
+    return pd.DataFrame(data)
 
 # ---------------- START BUTTON ----------------
 if st.button("Start"):
     with st.spinner("Checking rankings on Google..."):
-        df = check_rankings()
+        df = check_all_keywords()
 
     st.success("Ranking check completed!")
     st.dataframe(df, use_container_width=True)
